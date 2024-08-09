@@ -1,11 +1,19 @@
 import json
 import os
+from typing import Any, TypedDict
 
+import polars as pl
 import spotipy
 from dotenv import load_dotenv
 from spotipy.oauth2 import SpotifyOAuth
 
 from bpm_sorter.config import Config
+
+
+class Playlist(TypedDict):
+    id: str
+    name: str
+    tracks: pl.DataFrame
 
 
 def main(client_id: str, client_secret: str, redirect_uri: str, config: Config) -> None:
@@ -19,16 +27,42 @@ def main(client_id: str, client_secret: str, redirect_uri: str, config: Config) 
         ]
     )
     auth_manager = SpotifyOAuth(
-        client_id=client_id, client_secret=client_secret, redirect_uri=redirect_uri, scope=scope
+        client_id=client_id,
+        client_secret=client_secret,
+        redirect_uri=redirect_uri,
+        scope=scope,
     )
     sp = spotipy.Spotify(auth_manager=auth_manager)
 
-    source_playlist = sp.playlist(config["sourcePlaylist"], fields="tracks(items(track(id,name)))")
+    source_playlist = fetch_playlist(sp, config["sourcePlaylist"])
+    target_playlists = [fetch_playlist(sp, playlist["playlist"]) for playlist in config["targets"]]
 
-    print(source_playlist)
+    all_targets = pl.concat([playlist["tracks"] for playlist in target_playlists], how="vertical")
 
-    for track in source_playlist["tracks"]["items"]:
-        print(track["track"]["name"])
+    tracks_to_sort = source_playlist["tracks"].join(all_targets, on="id", how="anti")
+
+    print(tracks_to_sort)
+
+
+def fetch_playlist(sp: spotipy.Spotify, playlist_url: str) -> Playlist:
+    print(f"Fetch playlist {playlist_url}")
+    playlist: dict = sp.playlist(playlist_url, fields="id,name")
+
+    response: dict = sp.playlist_items(playlist["id"], fields="next,items(track(id,name))")
+    raw_tracks: list = response["items"]
+
+    while response.get("next"):
+        response: dict = sp.next(response)  # type: ignore
+        raw_tracks.extend(response["items"])
+
+    track_df = pl.DataFrame([track["track"] for track in raw_tracks])
+    print("track_df", track_df)
+
+    return {
+        "id": playlist["id"],
+        "name": playlist["name"],
+        "tracks": track_df,
+    }
 
 
 if __name__ == "__main__":

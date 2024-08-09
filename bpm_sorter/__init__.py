@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Any, TypedDict
+from typing import TypedDict
 
 import polars as pl
 import spotipy
@@ -40,8 +40,43 @@ def main(client_id: str, client_secret: str, redirect_uri: str, config: Config) 
     all_targets = pl.concat([playlist["tracks"] for playlist in target_playlists], how="vertical")
 
     tracks_to_sort = source_playlist["tracks"].join(all_targets, on="id", how="anti")
-
     print(tracks_to_sort)
+
+    tracks_with_audio_features = add_audio_features(sp, tracks_to_sort)
+    print(tracks_with_audio_features)
+
+    normalized_audio_features = normalize_tempo(tracks_with_audio_features, config)
+    print(normalized_audio_features)
+
+
+def add_audio_features(sp: spotipy.Spotify, tracks: pl.DataFrame) -> pl.DataFrame:
+    """Add audio features like the tempo to the tracks."""
+    audio_features_raw = []
+
+    for slice in tracks.iter_slices(100):
+        response = sp.audio_features(slice.get_column("id"))
+        audio_features_raw.extend(response)
+
+    audio_features = pl.DataFrame(audio_features_raw).select(pl.col(["id", "tempo"]))
+
+    return audio_features.join(tracks, on="id", how="right")
+
+
+def normalize_tempo(tracks: pl.DataFrame, config: Config) -> pl.DataFrame:
+    """Normalize the tempo of the tracks based on the config.
+
+    Sometimes, the tempo detected by spotify is half or double the actual tempo.
+    Based on the min and max BPM of the config, these errors can be corrected automatically.
+    """
+    return tracks.select(
+        "id",
+        "name",
+        pl.when(pl.col("tempo") < config["minBpm"])
+        .then(pl.col("tempo") * 2)
+        .when(pl.col("tempo") > config["maxBpm"])
+        .then(pl.col("tempo") / 2)
+        .otherwise(pl.col("tempo")),
+    )
 
 
 def fetch_playlist(sp: spotipy.Spotify, playlist_url: str) -> Playlist:

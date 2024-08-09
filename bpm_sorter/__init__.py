@@ -1,11 +1,14 @@
+import json
 import os
 
 import spotipy
 from dotenv import load_dotenv
 from spotipy.oauth2 import SpotifyOAuth
 
+from bpm_sorter.config import Config
 
-def main(client_id: str, client_secret: str, redirect_uri: str) -> None:
+
+def main(client_id: str, client_secret: str, redirect_uri: str, config: Config) -> None:
     # https://developer.spotify.com/documentation/web-api/concepts/scopes
     scope = ",".join(
         [
@@ -20,8 +23,12 @@ def main(client_id: str, client_secret: str, redirect_uri: str) -> None:
     )
     sp = spotipy.Spotify(auth_manager=auth_manager)
 
-    playlists = sp.current_user_playlists()
-    print(playlists)
+    source_playlist = sp.playlist(config["sourcePlaylist"], fields="tracks(items(track(id,name)))")
+
+    print(source_playlist)
+
+    for track in source_playlist["tracks"]["items"]:
+        print(track["track"]["name"])
 
 
 if __name__ == "__main__":
@@ -38,4 +45,12 @@ if __name__ == "__main__":
         )
         exit(1)
 
-    main(client_id=env_client_id, client_secret=env_client_secret, redirect_uri=env_redirect_uri)
+    with open("../config.json") as config_file:
+        file_config = json.load(config_file)
+
+    main(
+        client_id=env_client_id,
+        client_secret=env_client_secret,
+        redirect_uri=env_redirect_uri,
+        config=file_config,
+    )

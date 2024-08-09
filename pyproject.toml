@@ -23,6 +23,8 @@ lint.ignore = [
 
 [tool.poetry.dependencies]
 python = "^3.10"
+spotipy = "^2.24.0"
+python-dotenv = "^1.0.1"
 
 [tool.poetry.group.dev.dependencies]
 ruff = "^0.5.7"

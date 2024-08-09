@@ -1,5 +1,6 @@
 import json
 import os
+from time import sleep
 from typing import TypedDict
 
 import polars as pl
@@ -14,6 +15,8 @@ class Playlist(TypedDict):
     id: str
     name: str
     tracks: pl.DataFrame
+    min_bpm: float | None
+    max_bpm: float | None
 
 
 def main(client_id: str, client_secret: str, redirect_uri: str, config: Config) -> None:
@@ -34,8 +37,13 @@ def main(client_id: str, client_secret: str, redirect_uri: str, config: Config) 
     )
     sp = spotipy.Spotify(auth_manager=auth_manager)
 
-    source_playlist = fetch_playlist(sp, config["sourcePlaylist"])
-    target_playlists = [fetch_playlist(sp, playlist["playlist"]) for playlist in config["targets"]]
+    source_playlist = fetch_playlist(
+        sp, config["sourcePlaylist"], min_bpm=config["minBpm"], max_bpm=config["maxBpm"]
+    )
+    target_playlists = [
+        fetch_playlist(sp, playlist["playlist"], max_bpm=playlist.get("maxBpm"))
+        for playlist in config["targets"]
+    ]
 
     all_targets = pl.concat([playlist["tracks"] for playlist in target_playlists], how="vertical")
 
@@ -48,14 +56,66 @@ def main(client_id: str, client_secret: str, redirect_uri: str, config: Config) 
     normalized_audio_features = normalize_tempo(tracks_with_audio_features, config)
     print(normalized_audio_features)
 
+    sorted_tracks = sort_tracks(normalized_audio_features, target_playlists)
+    print(sorted_tracks)
+
+    print(f"\n\nSorting {tracks_to_sort.count()} tracks:\n")
+
+    for playlist in target_playlists:
+        new_tracks = sorted_tracks.filter(pl.col("playlist") == playlist["id"])
+        print(f"{playlist['name']}:", new_tracks)
+
+    confirm_input = ""
+
+    while True:
+        confirm_input = input("Continue [y/N]?").lower()
+        if confirm_input == "y":
+            break
+        elif confirm_input == "n":
+            exit(1)
+
+    for playlist in target_playlists:
+        new_tracks = sorted_tracks.filter(pl.col("playlist") == playlist["id"])
+        add_tracks_to_playlist(sp, new_tracks, playlist)
+
+    print("Completed successfully!")
+
+
+def add_tracks_to_playlist(sp: spotipy.Spotify, tracks: pl.DataFrame, playlist: Playlist) -> None:
+    """Add all the tracks in the dataframe to the given playlist."""
+    # Only 100 tracks can be added at a time
+    for slice in tracks.iter_slices(100):
+        sp.playlist_add_items(playlist["id"], slice.get_column("id"))
+        sleep(0.5)
+
+
+def sort_tracks(tracks: pl.DataFrame, target_playlists: list[Playlist]) -> pl.DataFrame:
+    """Sort the tracks into the target playlists depending on their BPM."""
+    # For easier chaining we start with an expressions that's never true
+    sort_query: pl.When = pl.when(False).then(pl.lit(""))
+
+    # ASSUMPTION: Only the last target playlist has no max BPM and they are sorted by BPM
+    for playlist in target_playlists:
+        max_bpm = playlist.get("max_bpm")
+        if max_bpm is not None:
+            sort_query = sort_query.when(pl.col("tempo") < max_bpm).then(pl.lit(playlist["id"]))
+        else:
+            sort_query = sort_query.otherwise(pl.lit(playlist["id"]))
+            break
+
+    return tracks.select("id", "name", "tempo", sort_query.alias("playlist"))
+
 
 def add_audio_features(sp: spotipy.Spotify, tracks: pl.DataFrame) -> pl.DataFrame:
     """Add audio features like the tempo to the tracks."""
     audio_features_raw = []
 
+    # Audio features can be fetched for max 100 tracks
     for slice in tracks.iter_slices(100):
         response = sp.audio_features(slice.get_column("id"))
         audio_features_raw.extend(response)
+
+        sleep(0.5)
 
     audio_features = pl.DataFrame(audio_features_raw).select(pl.col(["id", "tempo"]))
 
@@ -79,7 +139,12 @@ def normalize_tempo(tracks: pl.DataFrame, config: Config) -> pl.DataFrame:
     )
 
 
-def fetch_playlist(sp: spotipy.Spotify, playlist_url: str) -> Playlist:
+def fetch_playlist(
+    sp: spotipy.Spotify,
+    playlist_url: str,
+    min_bpm: float | None = None,
+    max_bpm: float | None = None,
+) -> Playlist:
     print(f"Fetch playlist {playlist_url}")
     playlist: dict = sp.playlist(playlist_url, fields="id,name")
 
@@ -90,12 +155,16 @@ def fetch_playlist(sp: spotipy.Spotify, playlist_url: str) -> Playlist:
         response: dict = sp.next(response)  # type: ignore
         raw_tracks.extend(response["items"])
 
+        sleep(0.5)
+
     track_df = pl.DataFrame([track["track"] for track in raw_tracks])
     print("track_df", track_df)
 
     return {
         "id": playlist["id"],
         "name": playlist["name"],
+        "min_bpm": min_bpm,
+        "max_bpm": max_bpm,
         "tracks": track_df,
     }
 

@@ -19,7 +19,32 @@ class Playlist(TypedDict):
     max_bpm: float | None
 
 
-def main(client_id: str, client_secret: str, redirect_uri: str, config: Config) -> None:
+def main() -> None:
+    load_dotenv()
+
+    env_client_id = os.getenv("SPOTIFY_CLIENT_ID")
+    env_client_secret = os.getenv("SPOTIFY_CLIENT_SECRET")
+    env_redirect_uri = os.getenv("SPOTIFY_REDIRECT_URI")
+
+    if not env_client_id or not env_client_secret or not env_redirect_uri:
+        print(
+            "You need to specify SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET and SPOTIFY_REDIRECT_URI "
+            + "in the .env file"
+        )
+        exit(1)
+
+    with open("config.json") as config_file:
+        file_config = json.load(config_file)
+
+    sorter(
+        client_id=env_client_id,
+        client_secret=env_client_secret,
+        redirect_uri=env_redirect_uri,
+        config=file_config,
+    )
+
+
+def sorter(client_id: str, client_secret: str, redirect_uri: str, config: Config) -> None:
     # https://developer.spotify.com/documentation/web-api/concepts/scopes
     scope = ",".join(
         [
@@ -170,25 +195,4 @@ def fetch_playlist(
 
 
 if __name__ == "__main__":
-    load_dotenv()
-
-    env_client_id = os.getenv("SPOTIFY_CLIENT_ID")
-    env_client_secret = os.getenv("SPOTIFY_CLIENT_SECRET")
-    env_redirect_uri = os.getenv("SPOTIFY_REDIRECT_URI")
-
-    if not env_client_id or not env_client_secret or not env_redirect_uri:
-        print(
-            "You need to specify SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET and SPOTIFY_REDIRECT_URI "
-            + "in the .env file"
-        )
-        exit(1)
-
-    with open("../config.json") as config_file:
-        file_config = json.load(config_file)
-
-    main(
-        client_id=env_client_id,
-        client_secret=env_client_secret,
-        redirect_uri=env_redirect_uri,
-        config=file_config,
-    )
+    main()

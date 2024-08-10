@@ -6,6 +6,9 @@ authors = ["Tim Jentzsch <bpm_sorter.projects@timjen.net>"]
 license = "GPL-3.0-or-later"
 readme = "README.md"
 
+[tool.poetry.scripts]
+main = 'bpm_sorter:main'
+
 [tool.ruff]
 line-length = 100
 lint.select = ["E", "F", "D", "I"]
